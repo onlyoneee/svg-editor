@@ -1,6 +1,6 @@
 # SVG 编辑器架构与开发记录
 
-本文档随代码共同演进。当前已完成项目骨架、领域模型、SVG 读写、编辑命令历史及完整 CLI 命令解析。
+本文档从项目骨架阶段开始随代码共同演进。当前已完成领域模型、SVG 读写、Command 历史、完整 CLI、集成测试和架构一致性检查。
 
 ## 架构方案
 
@@ -16,6 +16,8 @@
 
 ```plantuml
 @startuml
+component "main.ts\nComposition Root" as Main
+
 package "Presentation" {
   [CLI]
   [Formatters]
@@ -25,6 +27,7 @@ package "Application" {
   [Commands]
   [History]
   [Services]
+  interface "DocumentStore" as StorePort
 }
 
 package "Domain" {
@@ -37,14 +40,18 @@ package "Infrastructure" {
   [File System]
 }
 
+Main --> [CLI]
+Main --> [File System]
 [CLI] --> [Commands]
 [CLI] --> [Services]
 [Formatters] --> [SVG Document]
 [Commands] --> [SVG Document]
 [History] --> [Commands]
 [Services] --> [SVG Document]
+[Services] --> StorePort
 [SVG I/O] --> [SVG Document]
-[File System] --> [Services]
+[File System] ..> StorePort : implements
+[File System] --> [SVG I/O]
 @enduml
 ```
 
@@ -58,6 +65,31 @@ package "Infrastructure" {
 - **Visitor**：SVG 序列化和 CLI 图形格式化都通过图形 Visitor 获取具体类型数据，使展示逻辑无需按标签名分派。
 
 上述模式均已在对应模块落地。命令名分派只存在于 `CommandRegistry`，图形类型到具体类的分派只存在于 `ShapeFactory`。
+
+#### Command 的具体落点
+
+| Command 角色     | 代码位置                                                                                                                                                       | 落地方式                                               |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Command 接口     | `src/application/commands/EditCommand.ts`                                                                                                                      | 统一声明 `execute()` 和 `undo()`                       |
+| Concrete Command | `CreateCommand`、`DeleteCommand`、`MoveCommand`、`ScaleCommand`、`SetCommand`、`FrontCommand`、`BackCommand`、`AddToCommand`、`GroupCommand`、`UngroupCommand` | 每个编辑动作一类一文件，保存自身撤销所需状态           |
+| Invoker          | `src/application/history/CommandHistory.ts`                                                                                                                    | 执行命令并维护 undo/redo 栈，成功执行新命令后清空 redo |
+| Receiver         | `SvgDocument`、`Shape` 及具体图形类                                                                                                                            | 真正执行增删、移动、缩放、属性和顺序规则               |
+| Client / Adapter | `src/presentation/cli/commands/*CliCommand.ts`                                                                                                                 | 解析 CLI 参数，构造应用层 Command 并交给历史执行       |
+| 历史边界         | `src/application/services/DocumentSession.ts`                                                                                                                  | init/read/save/canvas 成功后建立历史屏障               |
+
+表现层的 `CliCommand` 负责“用户输入到应用调用”的适配；应用层的 `EditCommand` 才是可撤销的 Command。两者名称接近但职责和生命周期不同。
+
+#### Composite 的具体落点
+
+| Composite 角色 | 代码位置                                    | 落地方式                                                                   |
+| -------------- | ------------------------------------------- | -------------------------------------------------------------------------- |
+| Component      | `src/domain/shapes/Shape.ts`                | 为叶子和容器统一定义 `move`、`scale`、`set`、Memento、Visitor 和树遍历协议 |
+| Leaf           | `Rect`、`Circle`、`Ellipse`、`Line`、`Text` | 各自封装几何字段和属性白名单                                               |
+| Composite      | `src/domain/shapes/Group.ts`                | 保存子节点，并将移动、缩放和几何快照递归作用于子孙                         |
+| 聚合根         | `src/domain/document/SvgDocument.ts`        | 维护根顺序、父子位置和全局 ID 索引，统一接受叶子或容器子树                 |
+| 一致性协作     | `src/domain/shapes/ShapeOwner.ts`           | 组在已挂载文档中增删子树时同步全局索引                                     |
+
+编辑命令只依赖 `Shape`/`SvgDocument` 的统一操作，不需要按叶子或容器分别实现。删除容器、移动容器和缩放容器因此保持同一命令语义。
 
 ### 依赖方向规则
 
@@ -85,6 +117,21 @@ package "Infrastructure" {
 当前不为网络协作、GUI 和插件动态加载实现扩展框架，因为这些内容不属于 Phase 1 的交付范围。
 
 ## 过程记录
+
+### AI 协作方式
+
+用户按阶段给出目标和可验收行为，AI 在每一阶段先检查已有代码和前一阶段约束，再实现、运行门禁、更新本文档并创建独立提交；用户在阶段之间通过本地 CLI 运行和远程推送继续验收。架构说明没有在最后集中补写：`git log --follow -- doc/README.md` 可看到本文档从首次骨架提交起随每个阶段持续修改。
+
+协作中保留了以下有代表性的复核和修正：
+
+| 阶段     | 初始判断或风险                                    | 复核后的处理                                            |
+| -------- | ------------------------------------------------- | ------------------------------------------------------- |
+| 领域模型 | 允许直接修改已挂载的 `Group` 会使文档 ID 索引失步 | 增加 `ShapeOwner` 协作协议，并用索引同步测试固定行为    |
+| SVG 读写 | 若边解析边替换当前文档，失败可能留下半份新文档    | 先完整构建候选文档，成功后由 `DocumentSession` 一次替换 |
+| Command  | 用逆运算实现 scale undo 会积累浮点误差            | 改用递归 `GeometryMemento` 精确恢复原值                 |
+| 历史     | 失败的新命令若提前清空 redo，会破坏已有历史       | 命令成功后才入栈和清空 redo，并补失败场景测试           |
+| CLI      | 把 `#` 当行内注释会截断 `#ffffff` 颜色            | 只接受去除前导空白后以 `#` 开头的整行注释               |
+| 集成测试 | 只断言成功消息无法证明失败命令没有部分修改        | 在错误前后比较完整 `tree` 快照，并用真实子进程回放      |
 
 ### 阶段 1：项目骨架
 
@@ -148,24 +195,92 @@ package "Infrastructure" {
 | I/O 和历史屏障              | 检查错误输出、自动 ID 警告和屏障后的 undo 行为  |
 | 完整 transcript             | 真实子进程逐行回放需求文档会话                  |
 
+### 阶段 7：文档和一致性检查
+
+- 对照实际源码补充 Command 与 Composite 的参与者、文件位置和调用关系，区分表现层 `CliCommand` 与应用层可撤销 `EditCommand`。
+- 复核 PlantUML 与实际装配关系，补入 `main.ts` 组合根、`DocumentStore` 端口，以及文件系统适配器对 SVG 读写组件的依赖。
+- 逐层扫描源码 import，并增加 `test/Architecture.test.ts` 自动检查允许的依赖方向。检查覆盖全部 `src` TypeScript 文件，而不只依靠人工抽样。
+- 对照最初模块方案记录实现细化和范围决定；顶层四层结构没有偏离，新增内容都位于原定职责内部。
+
+文档演进记录：
+
+| 阶段 | 提交      | 文档随提交记录的内容                      |
+| ---- | --------- | ----------------------------------------- |
+| 1    | `0e35494` | 初始架构、依赖规则、变化点和质量门禁      |
+| 2    | `cfd5b3c` | Composite、全局索引及循环检查的实现决策   |
+| 3    | `ac1a6ac` | SVG 往返、自动 ID、原子读取及支持范围     |
+| 4    | `4f7fcbe` | Command、Memento、顺序恢复和历史屏障      |
+| 5    | `80013ee` | tokenizer、注册表、CLI 格式化和端到端入口 |
+| 6    | `9a8abe6` | 用户行为集成矩阵和错误原子性验证          |
+
 ## 一致性自查
 
 ### 模块划分
 
-实际目录与架构方案一致。`domain`、`application/commands`、`application/history`、`application/services`、`infrastructure/svg`、`infrastructure/filesystem`、`presentation/cli` 和 `presentation/formatters` 均已由具体实现填充。
+实际运行时代码保持最初方案中的四层和一个组合入口：
+
+```text
+src/
+├── domain/
+│   ├── document/
+│   ├── errors/
+│   └── shapes/
+├── application/
+│   ├── commands/
+│   ├── errors/
+│   ├── history/
+│   └── services/
+├── infrastructure/
+│   ├── filesystem/
+│   └── svg/
+├── presentation/
+│   ├── cli/
+│   │   └── commands/
+│   └── formatters/
+└── main.ts
+```
+
+顶层模块没有偏离方案。实现过程中出现了三处文件级细化：
+
+1. 领域层增加 `ShapeOwner`，解决已挂载容器变化时的全局 ID 索引同步；增加 `GeometryMemento`，支持递归且精确的几何撤销。这两项仍属于领域约束。
+2. 表现层把每条 CLI 命令拆到 `presentation/cli/commands`。它们是参数和输出适配器；真正可撤销的命令仍位于 `application/commands`。
+3. 测试位于顶层 `test/`，没有放进任何运行时层。集成测试启动编译后的入口，架构测试读取源码 import，但生产代码不依赖测试。
+
+插件动态加载、复合 `box` 图形、GUI 和网络存储继续按范围决定保留为未来变化点，本阶段没有为其增加空抽象或目录。
 
 ### 依赖方向
 
-领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。应用层命令依赖领域模型，历史模块只依赖命令接口；`DocumentSession` 依赖领域模型、历史和 `DocumentStore` 抽象。基础设施层实现该端口并依赖 SVG XML 库。表现层依赖应用服务、命令和只读领域对象，不引用基础设施；具体文件存储只在组合根注入。未发现违反依赖规则的引用。
+阶段 7 先用 `rg` 抽样查看关键 import，再由架构测试扫描全部源码。结果如下：
 
-后续每个阶段完成后继续抽样检查 import 方向，并在出现偏差时更新本节和修订记录。
+| 抽样点                                                                         | 实际依赖                                       | 结论                               |
+| ------------------------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------- |
+| `domain/shapes/Shape.ts`、`Group.ts`、`domain/document/SvgDocument.ts`         | 只引用 `domain` 内部类型                       | 符合；领域层不认识外层             |
+| `application/commands/GroupCommand.ts`、`history/CommandHistory.ts`            | 引用领域模型或应用层接口                       | 符合；没有 CLI、XML 或文件系统依赖 |
+| `application/services/DocumentSession.ts`                                      | 依赖领域文档、历史和 `DocumentStore` 端口      | 符合依赖倒置                       |
+| `infrastructure/filesystem/SvgFileStore.ts`                                    | 实现应用端口，组合 `SvgParser`/`SvgSerializer` | 符合；具体 I/O 留在基础设施层      |
+| `presentation/cli/commands/CreateCliCommand.ts`、`formatters/TreeFormatter.ts` | 依赖应用命令、服务和领域只读对象               | 符合；没有引用基础设施             |
+| `main.ts`                                                                      | 引用并装配全部层                               | 符合组合根例外                     |
+
+`test/Architecture.test.ts` 根据源文件所在层解析相对 import，并执行以下允许矩阵：
+
+| 来源层           | 允许依赖                                  |
+| ---------------- | ----------------------------------------- |
+| `domain`         | `domain`                                  |
+| `application`    | `application`、`domain`                   |
+| `infrastructure` | `infrastructure`、`application`、`domain` |
+| `presentation`   | `presentation`、`application`、`domain`   |
+
+检查结果为零条违规。`main.ts` 作为组合根不套用单层限制。以后新增源码若反向引用，会直接使 `npm test` 失败。
 
 ## 质量保证手段
 
 当前质量门禁为：
 
 1. `npm run build`：使用 TypeScript 严格模式编译生产代码。
-2. `npm test`：编译并运行 57 项 Node 测试，其中集成层通过真实 CLI 子进程覆盖六种图形、显示与保存、多层组合、全部编辑命令的 undo/redo、顺序恢复、redo 清空、历史屏障、错误原子性、文件异常、Unicode、XML 特殊字符和完整 transcript；单元层继续覆盖领域不变量和读写细节。
+2. `npm test`：编译并运行 58 项 Node 测试，其中集成层通过真实 CLI 子进程覆盖六种图形、显示与保存、多层组合、全部编辑命令的 undo/redo、顺序恢复、redo 清空、历史屏障、错误原子性、文件异常、Unicode、XML 特殊字符和完整 transcript；单元层继续覆盖领域不变量和读写细节。
 3. `npm run format:check`：验证源码、配置和文档格式。
 4. `npm run check`：顺序执行以上全部检查。
 5. CLI 端到端检查：以子进程启动程序，逐行回放需求中的典型操作，验证横幅、`svg>` 提示符、输出、错误恢复和 `exit`/`quit` 退出。
+6. 架构依赖检查：扫描 `src` 中全部相对 import，对照分层允许矩阵，发现反向依赖时使测试失败。
+
+这些手段分别覆盖静态类型、领域规则、应用历史、SVG 往返、真实 CLI 行为、格式一致性和架构方向。当前门禁没有跳过项，构建及测试不依赖网络服务。
