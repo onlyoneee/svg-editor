@@ -1,3 +1,4 @@
+import { GeometryMemento } from "./GeometryMemento.js";
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
 import type { ShapeVisitor } from "./ShapeVisitor.js";
@@ -34,6 +35,15 @@ export class Circle extends Shape {
     return visitor.visitCircle(this);
   }
 
+  public override createGeometryMemento(): GeometryMemento {
+    const { cxValue, cyValue, radiusValue } = this;
+    return new GeometryMemento(() => {
+      this.cxValue = cxValue;
+      this.cyValue = cyValue;
+      this.radiusValue = radiusValue;
+    });
+  }
+
   protected override moveBy(dx: number, dy: number): void {
     this.cxValue += dx;
     this.cyValue += dy;
@@ -58,6 +68,19 @@ export class Circle extends Shape {
         return true;
       default:
         return false;
+    }
+  }
+
+  protected override getSpecificAttribute(attribute: string): AttributeValue | undefined {
+    switch (attribute) {
+      case "cx":
+        return this.cxValue;
+      case "cy":
+        return this.cyValue;
+      case "r":
+        return this.radiusValue;
+      default:
+        return undefined;
     }
   }
 }

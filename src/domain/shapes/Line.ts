@@ -1,3 +1,4 @@
+import { GeometryMemento } from "./GeometryMemento.js";
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
 import type { ShapeVisitor } from "./ShapeVisitor.js";
@@ -40,6 +41,16 @@ export class Line extends Shape {
     return visitor.visitLine(this);
   }
 
+  public override createGeometryMemento(): GeometryMemento {
+    const { x1Value, y1Value, x2Value, y2Value } = this;
+    return new GeometryMemento(() => {
+      this.x1Value = x1Value;
+      this.y1Value = y1Value;
+      this.x2Value = x2Value;
+      this.y2Value = y2Value;
+    });
+  }
+
   protected override moveBy(dx: number, dy: number): void {
     this.x1Value += dx;
     this.y1Value += dy;
@@ -70,6 +81,21 @@ export class Line extends Shape {
         return true;
       default:
         return false;
+    }
+  }
+
+  protected override getSpecificAttribute(attribute: string): AttributeValue | undefined {
+    switch (attribute) {
+      case "x1":
+        return this.x1Value;
+      case "y1":
+        return this.y1Value;
+      case "x2":
+        return this.x2Value;
+      case "y2":
+        return this.y2Value;
+      default:
+        return undefined;
     }
   }
 }

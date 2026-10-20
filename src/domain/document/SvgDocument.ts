@@ -31,6 +31,10 @@ export class SvgDocument implements ShapeOwner {
     return this.shapesById.size;
   }
 
+  public get shapesInTreeOrder(): readonly Shape[] {
+    return this.rootShapeList.flatMap((shape) => [...shape.walk()]);
+  }
+
   public setCanvasSize(width: number, height: number): void {
     const validWidth = this.requirePositiveDimension("width", width);
     const validHeight = this.requirePositiveDimension("height", height);
@@ -55,7 +59,10 @@ export class SvgDocument implements ShapeOwner {
   }
 
   public requireGroup(id: string): Group {
-    const shape = this.requireShape(id);
+    const shape = this.findShape(id);
+    if (shape === undefined) {
+      throw new DomainError(`no such container: ${id}`);
+    }
     if (!(shape instanceof Group)) {
       throw new DomainError(`not a container: ${id}`);
     }
@@ -88,6 +95,16 @@ export class SvgDocument implements ShapeOwner {
     return { shape, parent, index };
   }
 
+  public placementOf(id: string): ShapePlacement {
+    const shape = this.requireShape(id);
+    const parent = shape.parent;
+    const index = parent === null ? this.requireRootIndex(shape) : parent.children.indexOf(shape);
+    if (index < 0) {
+      throw new DomainError(`shape is not attached to this document: ${shape.id}`);
+    }
+    return { shape, parent, index };
+  }
+
   public registerSubtree(shape: Shape): void {
     const shapesToRegister = [...shape.walk()];
     this.assertSubtreeCanBeRegistered(shapesToRegister);
@@ -113,50 +130,48 @@ export class SvgDocument implements ShapeOwner {
   public moveShapeToContainer(shapeId: string, containerId: string): void {
     const shape = this.requireShape(shapeId);
     const container = this.requireGroup(containerId);
-
-    if (shape === container || (shape instanceof Group && shape.contains(container))) {
-      throw new DomainError(`cannot move a container into its own descendant: ${shape.id}`);
-    }
-
-    if (shape.parent === container) {
-      container.moveChildToFront(shape);
-      return;
-    }
-
-    this.detachShape(shape);
-    container.appendChild(shape);
+    const destinationIndex =
+      shape.parent === container ? container.children.length - 1 : container.children.length;
+    this.moveShapeToPlacement(shapeId, container, destinationIndex);
   }
 
   public moveShapeToRoot(shapeId: string): void {
     const shape = this.requireShape(shapeId);
-    if (shape.parent === null) {
-      this.moveRootShapeToFront(shape);
-      return;
-    }
-
-    shape.parent.removeChild(shape);
-    this.registerSubtree(shape);
-    this.rootShapeList.push(shape);
+    const destinationIndex =
+      shape.parent === null ? this.rootShapeList.length - 1 : this.rootShapeList.length;
+    this.moveShapeToPlacement(shapeId, null, destinationIndex);
   }
 
   public bringToFront(id: string): void {
     const shape = this.requireShape(id);
     if (shape.parent === null) {
-      this.moveRootShapeToFront(shape);
+      this.moveShapeToPlacement(id, null, this.rootShapeList.length - 1);
     } else {
-      shape.parent.moveChildToFront(shape);
+      this.moveShapeToPlacement(id, shape.parent, shape.parent.children.length - 1);
     }
   }
 
   public sendToBack(id: string): void {
     const shape = this.requireShape(id);
-    if (shape.parent === null) {
-      const index = this.requireRootIndex(shape);
-      this.rootShapeList.splice(index, 1);
-      this.rootShapeList.unshift(shape);
-    } else {
-      shape.parent.moveChildToBack(shape);
+    this.moveShapeToPlacement(id, shape.parent, 0);
+  }
+
+  public moveShapeToPlacement(shapeId: string, parent: Group | null, index: number): void {
+    const shape = this.requireShape(shapeId);
+    if (parent !== null) {
+      this.assertRegisteredGroup(parent);
+      if (shape === parent || (shape instanceof Group && shape.contains(parent))) {
+        throw new DomainError(`cannot move a container into its own descendant: ${shape.id}`);
+      }
     }
+
+    const currentParent = shape.parent;
+    const destinationLength = parent === null ? this.rootShapeList.length : parent.children.length;
+    const lengthAfterDetaching = destinationLength - (currentParent === parent ? 1 : 0);
+    const insertionIndex = this.requireInsertionIndex(index, lengthAfterDetaching);
+
+    this.detachShape(shape);
+    this.addShape(shape, parent, insertionIndex);
   }
 
   private assertSubtreeCanBeRegistered(shapes: readonly Shape[]): void {
@@ -197,12 +212,6 @@ export class SvgDocument implements ShapeOwner {
     const index = this.requireRootIndex(shape);
     this.rootShapeList.splice(index, 1);
     return index;
-  }
-
-  private moveRootShapeToFront(shape: Shape): void {
-    const index = this.requireRootIndex(shape);
-    this.rootShapeList.splice(index, 1);
-    this.rootShapeList.push(shape);
   }
 
   private requireRootIndex(shape: Shape): number {

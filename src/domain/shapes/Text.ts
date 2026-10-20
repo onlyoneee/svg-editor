@@ -1,3 +1,4 @@
+import { GeometryMemento } from "./GeometryMemento.js";
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
 import type { ShapeVisitor } from "./ShapeVisitor.js";
@@ -34,6 +35,14 @@ export class Text extends Shape {
     return visitor.visitText(this);
   }
 
+  public override createGeometryMemento(): GeometryMemento {
+    const { xValue, yValue } = this;
+    return new GeometryMemento(() => {
+      this.xValue = xValue;
+      this.yValue = yValue;
+    });
+  }
+
   protected override moveBy(dx: number, dy: number): void {
     this.xValue += dx;
     this.yValue += dy;
@@ -57,6 +66,19 @@ export class Text extends Shape {
         return true;
       default:
         return false;
+    }
+  }
+
+  protected override getSpecificAttribute(attribute: string): AttributeValue | undefined {
+    switch (attribute) {
+      case "x":
+        return this.xValue;
+      case "y":
+        return this.yValue;
+      case "text":
+        return this.contentValue;
+      default:
+        return undefined;
     }
   }
 }

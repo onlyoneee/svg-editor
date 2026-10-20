@@ -1,6 +1,6 @@
 # SVG 编辑器架构与开发记录
 
-本文档随代码共同演进。当前已完成项目骨架、领域模型和 SVG 读写，应用命令将在后续阶段补充。
+本文档随代码共同演进。当前已完成项目骨架、领域模型、SVG 读写及编辑命令历史，CLI 命令解析将在后续阶段补充。
 
 ## 架构方案
 
@@ -50,11 +50,12 @@ package "Infrastructure" {
 
 ### 设计模式的选择
 
-- **Command**：每条可撤销编辑命令将实现统一的执行与撤销协议；历史模块管理 undo/redo 栈。一条用户命令对应一个原子撤销单元。
+- **Command**：每条可撤销编辑命令实现统一的 `execute`/`undo` 协议；`CommandHistory` 管理 undo/redo 栈。一条用户命令对应一个原子撤销单元。
 - **Composite**：叶子图形和 `g` 容器通过统一图形抽象参与移动、缩放、删除和属性设置。容器负责把适用操作递归传递给子孙。
 - **Factory**：图形类型名到具体类的映射集中在一个工厂。它是需求允许的两处按名称分派之一，后续插件化阶段再替换为注册机制。
+- **Memento**：移动和缩放命令在执行前捕获图形几何状态；容器的 Memento 组合其全部子孙状态，避免用逆运算撤销时产生浮点误差。
 
-阶段 2 已在 `Shape` 类层次和 `Group` 中落地 Composite。Command 和图形工厂将在后续阶段落地。
+Composite、Factory、Command 和 Memento 均已在对应模块落地。命令名到命令对象的注册与分派将在 CLI 阶段实现。
 
 ### 依赖方向规则
 
@@ -109,15 +110,24 @@ package "Infrastructure" {
 - 当前领域模型无法无损表达 `path`、任意 SVG 属性、复杂 `viewBox` 和 `transform`。解析器对此明确报错，避免保存时静默丢失内容或改变视觉结果。该范围与 Phase 1 的六种内置图形一致。
 - 拒绝 `DOCTYPE` 和自定义实体，只接受标准 XML 实体，避免把 SVG 读取变成外部实体或文档类型处理入口。
 
+### 阶段 4：Command 和历史
+
+- 每个编辑操作均为独立 Command 类，实现 `execute` 和 `undo`。`create`、`delete`、`move`、`scale`、`set`、`front`、`back`、`addto`、`group`、`ungroup` 已全部覆盖。
+- `CommandHistory` 在命令成功后才写入 undo 栈。失败命令不进入历史，也不会清空已有 redo 栈；undo 后的新编辑成功时才清空 redo。
+- `SvgDocument` 提供位置快照和按父容器、索引精确复原的能力。删除、层级移动和 z-order 撤销均恢复原父容器与原顺序。
+- `group` 在修改前验证全部 ID、重复选择和祖先/子孙冲突，整组操作只占一个历史单元；子图形按照原树顺序进入新组。`ungroup` 同样一次提升或恢复全部直接子节点。
+- move/scale 使用几何 Memento 撤销。对 `g` 创建 Memento 时递归捕获子孙，因此小数几何值也能精确恢复。
+- `DocumentSession` 在成功的 init/read/save/canvas 修改后清空旧历史并建立屏障。下一条成功编辑解除屏障并开始新的历史段；失败的 I/O 或画布修改不影响现有历史。
+
 ## 一致性自查
 
 ### 模块划分
 
-实际目录与架构方案一致。`domain`、`application/services`、`infrastructure/svg` 和 `infrastructure/filesystem` 的占位文件已由实现替换，其余待实现模块继续保留占位文件。
+实际目录与架构方案一致。`domain`、`application/commands`、`application/history`、`application/services`、`infrastructure/svg` 和 `infrastructure/filesystem` 的占位文件已由实现替换，待实现的显示格式化模块继续保留占位文件。
 
 ### 依赖方向
 
-领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。应用层的 `DocumentSession` 依赖领域模型和 `DocumentStore` 抽象；基础设施层实现该端口并依赖 SVG XML 库。表现层仍未直接引用基础设施。未发现违反依赖规则的引用。
+领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。应用层命令依赖领域模型，历史模块只依赖命令接口；`DocumentSession` 依赖领域模型、历史和 `DocumentStore` 抽象。基础设施层实现该端口并依赖 SVG XML 库。表现层仍未直接引用基础设施。未发现违反依赖规则的引用。
 
 后续每个阶段完成后继续抽样检查 import 方向，并在出现偏差时更新本节和修订记录。
 
@@ -126,7 +136,7 @@ package "Infrastructure" {
 当前质量门禁为：
 
 1. `npm run build`：使用 TypeScript 严格模式编译生产代码。
-2. `npm test`：编译并运行 Node 测试，现阶段覆盖统一输出、六种图形、属性白名单、Composite 递归操作、全局 ID、循环检查、删除、z-order、XML 转义、自动 ID、SVG 往返和读取失败原子性。
+2. `npm test`：编译并运行 Node 测试，现阶段覆盖统一输出、六种图形、属性白名单、Composite 递归操作、全局 ID、循环检查、删除、z-order、XML 转义、自动 ID、SVG 往返、读取失败原子性、全部编辑命令、复合撤销、redo 清空和历史屏障。
 3. `npm run format:check`：验证源码、配置和文档格式。
 4. `npm run check`：顺序执行以上全部检查。
 5. CLI 冒烟检查：启动程序，确认显示横幅与 `svg>` 提示符，并能通过 `exit`、`quit` 或 EOF 正常结束。

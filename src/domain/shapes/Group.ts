@@ -1,4 +1,5 @@
 import { DomainError } from "../errors/DomainError.js";
+import { GeometryMemento } from "./GeometryMemento.js";
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
 import type { ShapeVisitor } from "./ShapeVisitor.js";
@@ -17,6 +18,15 @@ export class Group extends Shape {
 
   public override accept<Result>(visitor: ShapeVisitor<Result>): Result {
     return visitor.visitGroup(this);
+  }
+
+  public override createGeometryMemento(): GeometryMemento {
+    const childMementos = this.childList.map((child) => child.createGeometryMemento());
+    return new GeometryMemento(() => {
+      for (const memento of childMementos) {
+        memento.restore();
+      }
+    });
   }
 
   public appendChild(shape: Shape): void {
@@ -100,6 +110,10 @@ export class Group extends Shape {
 
   protected override setSpecificAttribute(_attribute: string, _value: AttributeValue): boolean {
     return false;
+  }
+
+  protected override getSpecificAttribute(_attribute: string): AttributeValue | undefined {
+    return undefined;
   }
 
   private requireChildIndex(shape: Shape): number {

@@ -1,4 +1,5 @@
 import { DomainError } from "../errors/DomainError.js";
+import type { GeometryMemento } from "./GeometryMemento.js";
 import type { Group } from "./Group.js";
 import type { ShapeOwner } from "./ShapeOwner.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
@@ -36,6 +37,8 @@ export abstract class Shape {
   public abstract readonly kind: ShapeKind;
 
   public abstract accept<Result>(visitor: ShapeVisitor<Result>): Result;
+
+  public abstract createGeometryMemento(): GeometryMemento;
 
   public get parent(): Group | null {
     return this.parentValue;
@@ -89,6 +92,45 @@ export abstract class Shape {
     }
   }
 
+  public getAttribute(attribute: string): AttributeValue | undefined {
+    switch (attribute) {
+      case "fill":
+        return this.fillValue;
+      case "stroke":
+        return this.strokeValue;
+      case "stroke-width":
+        return this.strokeWidthValue;
+      default: {
+        const value = this.getSpecificAttribute(attribute);
+        if (value === undefined) {
+          throw new DomainError(`unknown attribute: ${attribute}`);
+        }
+        return value;
+      }
+    }
+  }
+
+  public restoreAttribute(attribute: string, value: AttributeValue | undefined): void {
+    if (value !== undefined) {
+      this.set(attribute, value);
+      return;
+    }
+
+    switch (attribute) {
+      case "fill":
+        this.fillValue = undefined;
+        return;
+      case "stroke":
+        this.strokeValue = undefined;
+        return;
+      case "stroke-width":
+        this.strokeWidthValue = undefined;
+        return;
+      default:
+        throw new DomainError(`cannot clear required attribute: ${attribute}`);
+    }
+  }
+
   public *walk(): IterableIterator<Shape> {
     yield this;
   }
@@ -116,6 +158,8 @@ export abstract class Shape {
   protected abstract scaleBy(factor: number): void;
 
   protected abstract setSpecificAttribute(attribute: string, value: AttributeValue): boolean;
+
+  protected abstract getSpecificAttribute(attribute: string): AttributeValue | undefined;
 
   protected requireFiniteNumber(attribute: string, value: AttributeValue): number {
     const numberValue = typeof value === "number" ? value : Number(value);

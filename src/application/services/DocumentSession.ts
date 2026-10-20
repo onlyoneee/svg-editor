@@ -1,5 +1,6 @@
 import type { SvgDocument } from "../../domain/document/SvgDocument.js";
 import { EditorError } from "../errors/EditorError.js";
+import { CommandHistory } from "../history/CommandHistory.js";
 import type { DocumentStore } from "./DocumentStore.js";
 
 export class DocumentSession {
@@ -9,6 +10,7 @@ export class DocumentSession {
   public constructor(
     private readonly store: DocumentStore,
     initialDocument: SvgDocument | null = null,
+    public readonly history: CommandHistory = new CommandHistory(),
   ) {
     this.documentValue = initialDocument;
   }
@@ -24,12 +26,14 @@ export class DocumentSession {
   public replaceDocument(document: SvgDocument, filePath: string | null = null): void {
     this.documentValue = document;
     this.filePathValue = filePath;
+    this.history.recordDocumentOperation();
   }
 
   public read(filePath: string): readonly string[] {
     const result = this.store.read(filePath);
     this.documentValue = result.document;
     this.filePathValue = filePath;
+    this.history.recordDocumentOperation();
     return result.warnings;
   }
 
@@ -42,7 +46,13 @@ export class DocumentSession {
 
     this.store.write(destination, document);
     this.filePathValue = destination;
+    this.history.recordDocumentOperation();
     return destination;
+  }
+
+  public setCanvasSize(width: number, height: number): void {
+    this.requireDocument().setCanvasSize(width, height);
+    this.history.recordDocumentOperation();
   }
 
   public requireDocument(): SvgDocument {
