@@ -11,6 +11,62 @@ import { Text } from "./Text.js";
 export type ShapeAttributes = Readonly<Record<string, string>>;
 
 export class ShapeFactory {
+  public createFromParameters(type: string, id: string, parameters: readonly string[]): Shape {
+    switch (type as ShapeKind) {
+      case "rect":
+        this.requireParameterCount(type, parameters, 4, 5);
+        return this.create(type, id, {
+          x: this.parameter(parameters, 0),
+          y: this.parameter(parameters, 1),
+          width: this.parameter(parameters, 2),
+          height: this.parameter(parameters, 3),
+          ...this.optionalAttribute("fill", parameters[4]),
+        });
+      case "circle":
+        this.requireParameterCount(type, parameters, 3, 4);
+        return this.create(type, id, {
+          cx: this.parameter(parameters, 0),
+          cy: this.parameter(parameters, 1),
+          r: this.parameter(parameters, 2),
+          ...this.optionalAttribute("fill", parameters[3]),
+        });
+      case "ellipse":
+        this.requireParameterCount(type, parameters, 4, 5);
+        return this.create(type, id, {
+          cx: this.parameter(parameters, 0),
+          cy: this.parameter(parameters, 1),
+          rx: this.parameter(parameters, 2),
+          ry: this.parameter(parameters, 3),
+          ...this.optionalAttribute("fill", parameters[4]),
+        });
+      case "line":
+        this.requireParameterCount(type, parameters, 4, 5);
+        return this.create(type, id, {
+          x1: this.parameter(parameters, 0),
+          y1: this.parameter(parameters, 1),
+          x2: this.parameter(parameters, 2),
+          y2: this.parameter(parameters, 3),
+          ...this.optionalAttribute("stroke", parameters[4]),
+        });
+      case "text":
+        this.requireParameterCount(type, parameters, 3);
+        return this.create(
+          type,
+          id,
+          {
+            x: this.parameter(parameters, 0),
+            y: this.parameter(parameters, 1),
+          },
+          this.parameter(parameters, 2),
+        );
+      case "g":
+        this.requireParameterCount(type, parameters, 0);
+        return this.create(type, id, {});
+      default:
+        return this.create(type, id, {});
+    }
+  }
+
   public create(type: string, id: string, attributes: ShapeAttributes, textContent = ""): Shape {
     const style = this.readStyle(attributes);
 
@@ -83,6 +139,29 @@ export class ShapeFactory {
       style.strokeWidth = this.numberValue("stroke-width", attributes["stroke-width"]);
     }
     return style;
+  }
+
+  private requireParameterCount(
+    type: string,
+    parameters: readonly string[],
+    minimum: number,
+    maximum = minimum,
+  ): void {
+    if (parameters.length < minimum || parameters.length > maximum) {
+      throw new DomainError(`invalid parameter count for ${type}`);
+    }
+  }
+
+  private parameter(parameters: readonly string[], index: number): string {
+    const parameter = parameters[index];
+    if (parameter === undefined) {
+      throw new DomainError("missing shape parameter");
+    }
+    return parameter;
+  }
+
+  private optionalAttribute(name: string, value: string | undefined): ShapeAttributes {
+    return value === undefined ? {} : { [name]: value };
   }
 
   private assertAllowedAttributes(

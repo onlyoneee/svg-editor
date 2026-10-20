@@ -1,6 +1,8 @@
 import { createInterface, type Interface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 
+import type { CommandRegistry } from "./CommandRegistry.js";
+import type { CommandTokenizer } from "./CommandTokenizer.js";
 import type { Output } from "./Output.js";
 
 export class CliApplication {
@@ -10,6 +12,8 @@ export class CliApplication {
     private readonly input: Readable & { readonly isTTY?: boolean },
     private readonly terminalOutput: Writable,
     private readonly output: Output,
+    private readonly tokenizer: CommandTokenizer,
+    private readonly registry: CommandRegistry,
   ) {}
 
   public run(): Interface {
@@ -31,7 +35,14 @@ export class CliApplication {
       }
 
       if (input.length > 0 && !input.startsWith("#")) {
-        this.output.error(`unknown command: ${input.split(/\s+/, 1)[0] ?? input}`);
+        try {
+          const [commandName, ...arguments_] = this.tokenizer.tokenize(input);
+          if (commandName !== undefined) {
+            this.registry.execute(commandName, arguments_);
+          }
+        } catch (error) {
+          this.output.error(error instanceof Error ? error.message : String(error));
+        }
       }
 
       lineReader.prompt();

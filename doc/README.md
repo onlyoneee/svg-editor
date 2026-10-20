@@ -1,6 +1,6 @@
 # SVG 编辑器架构与开发记录
 
-本文档随代码共同演进。当前已完成项目骨架、领域模型、SVG 读写及编辑命令历史，CLI 命令解析将在后续阶段补充。
+本文档随代码共同演进。当前已完成项目骨架、领域模型、SVG 读写、编辑命令历史及完整 CLI 命令解析。
 
 ## 架构方案
 
@@ -54,8 +54,10 @@ package "Infrastructure" {
 - **Composite**：叶子图形和 `g` 容器通过统一图形抽象参与移动、缩放、删除和属性设置。容器负责把适用操作递归传递给子孙。
 - **Factory**：图形类型名到具体类的映射集中在一个工厂。它是需求允许的两处按名称分派之一，后续插件化阶段再替换为注册机制。
 - **Memento**：移动和缩放命令在执行前捕获图形几何状态；容器的 Memento 组合其全部子孙状态，避免用逆运算撤销时产生浮点误差。
+- **Registry**：CLI 通过命令注册表完成命令名到处理器的分派，新增命令只需实现统一接口并在组合根注册。
+- **Visitor**：SVG 序列化和 CLI 图形格式化都通过图形 Visitor 获取具体类型数据，使展示逻辑无需按标签名分派。
 
-Composite、Factory、Command 和 Memento 均已在对应模块落地。命令名到命令对象的注册与分派将在 CLI 阶段实现。
+上述模式均已在对应模块落地。命令名分派只存在于 `CommandRegistry`，图形类型到具体类的分派只存在于 `ShapeFactory`。
 
 ### 依赖方向规则
 
@@ -119,15 +121,24 @@ Composite、Factory、Command 和 Memento 均已在对应模块落地。命令�
 - move/scale 使用几何 Memento 撤销。对 `g` 创建 Memento 时递归捕获子孙，因此小数几何值也能精确恢复。
 - `DocumentSession` 在成功的 init/read/save/canvas 修改后清空旧历史并建立屏障。下一条成功编辑解除屏障并开始新的历史段；失败的 I/O 或画布修改不影响现有历史。
 
+### 阶段 5：命令解析和 CLI
+
+- `CommandTokenizer` 逐字符识别双引号参数，支持引号内的转义引号、反斜杠和空字符串；`#` 只在整行开头表示注释，因此 SVG 颜色值不会被误删。
+- `CommandRegistry` 是唯一的命令名分派点。19 条文档、编辑、显示和历史命令均实现同一 `CliCommand` 接口，由 `main.ts` 统一装配。
+- `CliArguments` 统一检查参数数量和有限数值；`create` 仅在参数尾部识别 `in <containerId>`，六种图形的参数到具体类型转换继续集中在 `ShapeFactory`。
+- `tree` 和 `show` 共享基于 Visitor 的图形格式化器，支持嵌套树、父容器、几何属性、文本和公共样式显示。
+- CLI 在单条命令边界捕获错误并经 `Output` 输出，失败后继续处理下一行。读入 SVG 的自动 ID 信息沿同一接口输出为 `warning:`。
+- 端到端测试用真实 Node 子进程回放典型会话，覆盖注释、引号、颜色、全部命令类型、历史屏障、读写文件和失败后继续执行。
+
 ## 一致性自查
 
 ### 模块划分
 
-实际目录与架构方案一致。`domain`、`application/commands`、`application/history`、`application/services`、`infrastructure/svg` 和 `infrastructure/filesystem` 的占位文件已由实现替换，待实现的显示格式化模块继续保留占位文件。
+实际目录与架构方案一致。`domain`、`application/commands`、`application/history`、`application/services`、`infrastructure/svg`、`infrastructure/filesystem`、`presentation/cli` 和 `presentation/formatters` 均已由具体实现填充。
 
 ### 依赖方向
 
-领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。应用层命令依赖领域模型，历史模块只依赖命令接口；`DocumentSession` 依赖领域模型、历史和 `DocumentStore` 抽象。基础设施层实现该端口并依赖 SVG XML 库。表现层仍未直接引用基础设施。未发现违反依赖规则的引用。
+领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。应用层命令依赖领域模型，历史模块只依赖命令接口；`DocumentSession` 依赖领域模型、历史和 `DocumentStore` 抽象。基础设施层实现该端口并依赖 SVG XML 库。表现层依赖应用服务、命令和只读领域对象，不引用基础设施；具体文件存储只在组合根注入。未发现违反依赖规则的引用。
 
 后续每个阶段完成后继续抽样检查 import 方向，并在出现偏差时更新本节和修订记录。
 
@@ -136,9 +147,7 @@ Composite、Factory、Command 和 Memento 均已在对应模块落地。命令�
 当前质量门禁为：
 
 1. `npm run build`：使用 TypeScript 严格模式编译生产代码。
-2. `npm test`：编译并运行 Node 测试，现阶段覆盖统一输出、六种图形、属性白名单、Composite 递归操作、全局 ID、循环检查、删除、z-order、XML 转义、自动 ID、SVG 往返、读取失败原子性、全部编辑命令、复合撤销、redo 清空和历史屏障。
+2. `npm test`：编译并运行 40 项 Node 测试，覆盖统一输出、六种图形、属性白名单、Composite 递归操作、全局 ID、循环检查、删除、z-order、XML 转义、自动 ID、SVG 往返、读取失败原子性、全部编辑命令、复合撤销、redo 清空、历史屏障、tokenizer、命令注册和真实 CLI 会话。
 3. `npm run format:check`：验证源码、配置和文档格式。
 4. `npm run check`：顺序执行以上全部检查。
-5. CLI 冒烟检查：启动程序，确认显示横幅与 `svg>` 提示符，并能通过 `exit`、`quit` 或 EOF 正常结束。
-
-功能测试矩阵将在相应命令实现时逐步补充。
+5. CLI 端到端检查：以子进程启动程序，逐行回放需求中的典型操作，验证横幅、`svg>` 提示符、输出、错误恢复和 `exit`/`quit` 退出。
