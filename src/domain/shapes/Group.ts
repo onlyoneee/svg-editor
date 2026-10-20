@@ -1,6 +1,7 @@
 import { DomainError } from "../errors/DomainError.js";
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
+import type { ShapeVisitor } from "./ShapeVisitor.js";
 
 export class Group extends Shape {
   public readonly kind: ShapeKind = "g";
@@ -12,6 +13,10 @@ export class Group extends Shape {
 
   public get children(): readonly Shape[] {
     return this.childList;
+  }
+
+  public override accept<Result>(visitor: ShapeVisitor<Result>): Result {
+    return visitor.visitGroup(this);
   }
 
   public appendChild(shape: Shape): void {

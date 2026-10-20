@@ -2,6 +2,7 @@ import { DomainError } from "../errors/DomainError.js";
 import type { Group } from "./Group.js";
 import type { ShapeOwner } from "./ShapeOwner.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
+import type { ShapeVisitor } from "./ShapeVisitor.js";
 
 export type ShapeKind = "rect" | "circle" | "ellipse" | "line" | "text" | "g";
 export type AttributeValue = string | number;
@@ -33,6 +34,8 @@ export abstract class Shape {
   }
 
   public abstract readonly kind: ShapeKind;
+
+  public abstract accept<Result>(visitor: ShapeVisitor<Result>): Result;
 
   public get parent(): Group | null {
     return this.parentValue;

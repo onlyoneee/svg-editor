@@ -1,5 +1,6 @@
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
+import type { ShapeVisitor } from "./ShapeVisitor.js";
 
 export class Rect extends Shape {
   public readonly kind: ShapeKind = "rect";
@@ -33,6 +34,10 @@ export class Rect extends Shape {
 
   public get height(): number {
     return this.heightValue;
+  }
+
+  public override accept<Result>(visitor: ShapeVisitor<Result>): Result {
+    return visitor.visitRect(this);
   }
 
   protected override moveBy(dx: number, dy: number): void {

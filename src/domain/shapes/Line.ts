@@ -1,5 +1,6 @@
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
+import type { ShapeVisitor } from "./ShapeVisitor.js";
 
 export class Line extends Shape {
   public readonly kind: ShapeKind = "line";
@@ -33,6 +34,10 @@ export class Line extends Shape {
 
   public get y2(): number {
     return this.y2Value;
+  }
+
+  public override accept<Result>(visitor: ShapeVisitor<Result>): Result {
+    return visitor.visitLine(this);
   }
 
   protected override moveBy(dx: number, dy: number): void {

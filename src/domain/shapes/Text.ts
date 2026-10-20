@@ -1,5 +1,6 @@
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
+import type { ShapeVisitor } from "./ShapeVisitor.js";
 
 export class Text extends Shape {
   public readonly kind: ShapeKind = "text";
@@ -27,6 +28,10 @@ export class Text extends Shape {
 
   public get content(): string {
     return this.contentValue;
+  }
+
+  public override accept<Result>(visitor: ShapeVisitor<Result>): Result {
+    return visitor.visitText(this);
   }
 
   protected override moveBy(dx: number, dy: number): void {

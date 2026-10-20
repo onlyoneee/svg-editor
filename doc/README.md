@@ -1,6 +1,6 @@
 # SVG 编辑器架构与开发记录
 
-本文档随代码共同演进。当前已完成项目骨架和领域模型，应用命令及 SVG I/O 将在后续阶段补充。
+本文档随代码共同演进。当前已完成项目骨架、领域模型和 SVG 读写，应用命令将在后续阶段补充。
 
 ## 架构方案
 
@@ -77,6 +77,7 @@ package "Infrastructure" {
 | 替换本地文件系统                 | 文件访问限制在 `infrastructure/filesystem`   |
 | 输出到终端、测试缓冲区或其他界面 | 表现层通过 `Output` 接口输出                 |
 | 撤销策略变化                     | 历史职责集中在 `application/history`         |
+| XML 库或文件存储方式变化         | `DocumentStore` 端口隔离应用层与具体实现     |
 
 当前不为网络协作、GUI 和插件动态加载实现扩展框架，因为这些内容不属于 Phase 1 的交付范围。
 
@@ -99,15 +100,24 @@ package "Infrastructure" {
 - 父子移动先检查目标是否位于待移动容器的子树中，再摘除原节点，保证循环关系错误不会造成部分修改。
 - 删除子树会保留其内部父子结构，并返回原父容器和位置，供后续 Command 撤销恢复使用。
 
+### 阶段 3：SVG 读写
+
+- `SvgSerializer` 使用 Visitor 对六种图形进行多态序列化，没有新增按标签名判断的分派点；输出包含 XML 声明、SVG 命名空间、画布和 `viewBox`。
+- `SvgParser` 使用保序 XML 解析结果重建图形树。所有显式 ID 会先被收集，缺失 ID 再按标签编号，因此自动生成的 ID 不会与文件后部的显式 ID 冲突。
+- 属性值和 text 内容分别使用对应的 XML 转义规则；读取时由 XML 解析器还原实体。
+- `DocumentSession` 先让 `DocumentStore` 完整读取候选文档，成功后才替换当前文档和路径。文件不存在、XML 非法或模型校验失败时，旧状态保持不变。
+- 当前领域模型无法无损表达 `path`、任意 SVG 属性、复杂 `viewBox` 和 `transform`。解析器对此明确报错，避免保存时静默丢失内容或改变视觉结果。该范围与 Phase 1 的六种内置图形一致。
+- 拒绝 `DOCTYPE` 和自定义实体，只接受标准 XML 实体，避免把 SVG 读取变成外部实体或文档类型处理入口。
+
 ## 一致性自查
 
 ### 模块划分
 
-实际目录与架构方案一致。`domain/document` 和 `domain/shapes` 的占位文件已由领域实现替换，其余待实现模块继续保留占位文件。
+实际目录与架构方案一致。`domain`、`application/services`、`infrastructure/svg` 和 `infrastructure/filesystem` 的占位文件已由实现替换，其余待实现模块继续保留占位文件。
 
 ### 依赖方向
 
-领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。表现层只依赖自身输出抽象；组合入口负责实例化 CLI。未发现违反依赖规则的引用。
+领域层只引用领域内部类型，不依赖应用层、基础设施层或表现层。应用层的 `DocumentSession` 依赖领域模型和 `DocumentStore` 抽象；基础设施层实现该端口并依赖 SVG XML 库。表现层仍未直接引用基础设施。未发现违反依赖规则的引用。
 
 后续每个阶段完成后继续抽样检查 import 方向，并在出现偏差时更新本节和修订记录。
 
@@ -116,7 +126,7 @@ package "Infrastructure" {
 当前质量门禁为：
 
 1. `npm run build`：使用 TypeScript 严格模式编译生产代码。
-2. `npm test`：编译并运行 Node 测试，现阶段覆盖统一输出、六种图形、属性白名单、Composite 递归操作、全局 ID、循环检查、删除和 z-order。
+2. `npm test`：编译并运行 Node 测试，现阶段覆盖统一输出、六种图形、属性白名单、Composite 递归操作、全局 ID、循环检查、删除、z-order、XML 转义、自动 ID、SVG 往返和读取失败原子性。
 3. `npm run format:check`：验证源码、配置和文档格式。
 4. `npm run check`：顺序执行以上全部检查。
 5. CLI 冒烟检查：启动程序，确认显示横幅与 `svg>` 提示符，并能通过 `exit`、`quit` 或 EOF 正常结束。

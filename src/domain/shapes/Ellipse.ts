@@ -1,5 +1,6 @@
 import { Shape, type AttributeValue, type ShapeKind } from "./Shape.js";
 import type { ShapeStyle } from "./ShapeStyle.js";
+import type { ShapeVisitor } from "./ShapeVisitor.js";
 
 export class Ellipse extends Shape {
   public readonly kind: ShapeKind = "ellipse";
@@ -33,6 +34,10 @@ export class Ellipse extends Shape {
 
   public get radiusY(): number {
     return this.radiusYValue;
+  }
+
+  public override accept<Result>(visitor: ShapeVisitor<Result>): Result {
+    return visitor.visitEllipse(this);
   }
 
   protected override moveBy(dx: number, dy: number): void {
